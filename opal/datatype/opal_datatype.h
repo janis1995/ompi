@@ -43,6 +43,8 @@
 
 #include "opal/class/opal_object.h"
 
+#include "ddtpack.h"
+
 BEGIN_C_DECLS
 
 /*
@@ -76,6 +78,10 @@ BEGIN_C_DECLS
 #define OPAL_DATATYPE_FLAG_USER_LB 0x0040 /**< has a user defined LB */
 #define OPAL_DATATYPE_FLAG_USER_UB 0x0080 /**< has a user defined UB */
 #define OPAL_DATATYPE_FLAG_DATA    0x0100 /**< data or control structure */
+
+/* flags for libddtpack integration */
+#define OPAL_DATATYPE_FLAG_OPTIMIZED_PACKING 0x0200
+
 /*
  * We should make the difference here between the predefined contiguous and non contiguous
  * datatypes. The OPAL_DATATYPE_FLAG_BASIC is held by all predefined contiguous datatypes.
@@ -141,6 +147,9 @@ struct opal_datatype_t {
                          layer). This field should never be initialized in homogeneous
                          environments */
     /* --- cacheline 5 boundary (320 bytes) was 32-36 bytes ago --- */
+    /* Additional changes for libddtpack integration */
+    ddtpack_pack pack_func;
+    ddtpack_unpack unpack_func;
 
     /* size: 352, cachelines: 6, members: 15 */
     /* last cacheline: 28-32 bytes */

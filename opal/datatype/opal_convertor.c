@@ -499,6 +499,7 @@ size_t opal_convertor_compute_remote_size(opal_convertor_t *pConvertor)
         convertor->pDesc = (opal_datatype_t *) datatype;                                        \
         convertor->bConverted = 0;                                                              \
         convertor->use_desc = &(datatype->opt_desc);                                            \
+        convertor->pTmpBaseBuf = NULL;                                                          \
         /* If the data is empty we just mark the convertor as                                   \
          * completed. With this flag set the pack and unpack functions                          \
          * will not do anything.                                                                \
@@ -520,7 +521,7 @@ size_t opal_convertor_compute_remote_size(opal_convertor_t *pConvertor)
             if (!(convertor->flags & CONVERTOR_WITH_CHECKSUM)                                   \
                 && ((convertor->flags & OPAL_DATATYPE_FLAG_NO_GAPS)                             \
                     || ((convertor->flags & OPAL_DATATYPE_FLAG_CONTIGUOUS) && (1 == count)))) { \
-                return OPAL_SUCCESS;                                                            \
+                                return OPAL_SUCCESS;                                                            \
             }                                                                                   \
         }                                                                                       \
                                                                                                 \
@@ -640,18 +641,20 @@ int32_t opal_convertor_prepare_for_send(opal_convertor_t *convertor,
 #endif /* defined(CHECKSUM) */
         if (CONVERTOR_SEND_CONVERSION
             == (convertor->flags & (CONVERTOR_SEND_CONVERSION | CONVERTOR_HOMOGENEOUS))) {
-            convertor->fAdvance = opal_pack_general;
+                        convertor->fAdvance = opal_pack_general;
         } else {
             if (datatype->flags & OPAL_DATATYPE_FLAG_CONTIGUOUS) {
                 if (((datatype->ub - datatype->lb) == (ptrdiff_t) datatype->size)
                     || (1 >= convertor->count)) {
-                    convertor->fAdvance = opal_pack_homogeneous_contig;
+                                        convertor->fAdvance = opal_pack_homogeneous_contig;
                 } else {
-                    convertor->fAdvance = opal_pack_homogeneous_contig_with_gaps;
+                                        convertor->fAdvance = opal_pack_homogeneous_contig_with_gaps;
                 }
+            } else if (datatype->flags & OPAL_DATATYPE_FLAG_OPTIMIZED_PACKING) {
+                convertor->fAdvance = libddtpack_wrapper;
             } else {
                 convertor->fAdvance = opal_generic_simple_pack;
-            }
+                }
         }
 #if defined(CHECKSUM)
     }

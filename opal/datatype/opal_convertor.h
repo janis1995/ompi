@@ -119,6 +119,7 @@ struct opal_convertor_t {
 
     memcpy_fct_t cbmemcpy; /**< memcpy or accelerator memcpy */
     opal_accelerator_stream_t *stream;  /**<Accelerator stream for async copy */
+    uint8_t* pTmpBaseBuf; /**<Temporary base buffer in case datatype is greater then network buffer */ 
 };
 OPAL_DECLSPEC OBJ_CLASS_DECLARATION(opal_convertor_t);
 
