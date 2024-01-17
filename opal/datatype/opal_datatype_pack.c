@@ -54,7 +54,7 @@
 #    define opal_pack_homogeneous_contig_with_gaps_function opal_pack_homogeneous_contig_with_gaps
 #    define opal_generic_simple_pack_function               opal_generic_simple_pack
 #    define opal_pack_general_function                      opal_pack_general
-#    define libddtpack_wrapper_function                     libddtpack_wrapper
+#    define libddtpack_pack_function                        libddtpack_pack
 #endif /* defined(CHECKSUM) */
 
 /* the contig versions does not use the stack. They can easily retrieve
@@ -632,7 +632,7 @@ int32_t opal_pack_general_function(opal_convertor_t *pConvertor, struct iovec *i
     return 0;
 }
 
-int32_t libddtpack_wrapper_function(opal_convertor_t *pConvertor, struct iovec *iov,
+int32_t libddtpack_pack_function(opal_convertor_t *pConvertor, struct iovec *iov,
                                           uint32_t *out_size, size_t *max_data)
 {
     dt_stack_t *pStack;      /* pointer to the position on the stack */

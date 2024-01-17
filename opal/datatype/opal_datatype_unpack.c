@@ -57,6 +57,7 @@
 #    define opal_unpack_general_function            opal_unpack_general
 #    define opal_unpack_homogeneous_contig_function opal_unpack_homogeneous_contig
 #    define opal_generic_simple_unpack_function     opal_generic_simple_unpack
+#    define libddtpack_unpack_function              libddtpack_unpack
 #endif /* defined(CHECKSUM) */
 
 /**
@@ -684,4 +685,127 @@ int32_t opal_unpack_general_function(opal_convertor_t *pConvertor, struct iovec 
                          pConvertor->stack_pos, pStack->index, pStack->count,
                          (long) pStack->disp););
     return 0;
+}
+
+int32_t libddtpack_unpack_function(opal_convertor_t *pConvertor, struct iovec *iov,
+                                          uint32_t *out_size, size_t *max_data)
+{
+    dt_stack_t *pStack;      /* pointer to the position on the stack */
+    size_t total_unpacked = 0; /* total amount packed this time */
+    const opal_datatype_t *pData = pConvertor->pDesc;
+    unsigned char *conv_ptr, *iov_ptr, *cont_ptr;
+    size_t iov_len_local;
+    uint32_t iov_count;
+    uint32_t dt_size_true = pConvertor->pDesc->true_ub - pConvertor->pDesc->true_lb;
+    uint32_t dt_size_packed = pConvertor->pDesc->size; 
+    uint8_t align = pConvertor->pDesc->align;
+    uint8_t align_offset = 0;
+    
+    //Calculate proper alignment
+    if( (dt_size_true % align) != 0)
+    {
+        align_offset = align - (dt_size_true % align);
+    }
+
+    // Get current stack 
+    pStack = pConvertor->pStack + pConvertor->stack_pos;
+    // Get pointer to contiguous buffer from stack element 1 
+    cont_ptr = pConvertor->pTmpBaseBuf + pStack->disp;
+    //Go to stack position 0
+    pStack--;
+    pConvertor->stack_pos--;
+    // Get pointer to non contiguous buffer from stack element 0 
+    conv_ptr = pConvertor->pBaseBuf + pStack->disp;
+
+    for (iov_count = 0; iov_count < (*out_size); iov_count++) {
+        iov_ptr = (unsigned char *) iov[iov_count].iov_base;
+        iov_len_local = iov[iov_count].iov_len;
+
+        // In case datatype doesn't fit in network buffer allocate memory for unpacking
+        if((dt_size_packed > iov_len_local) && (NULL == pConvertor->pTmpBaseBuf))
+        {
+            //Allocate memory for one datatype
+            pConvertor->pTmpBaseBuf = malloc(dt_size_packed);
+            //Init contiguous pointer
+            cont_ptr = pConvertor->pTmpBaseBuf;
+        }
+
+        if (NULL == pConvertor->pTmpBaseBuf)
+        {
+            // Unpacking from buffer provided by lower layer possible
+            while(pStack->count > 0)
+            {
+                if((total_unpacked + dt_size_packed) > iov_len_local)
+                {
+                    //Update length of packed data
+                    *max_data = total_unpacked;
+                    //Save displacement of convertion pointer
+                    pStack->disp = conv_ptr - pConvertor->pBaseBuf; 
+                    PUSH_STACK(pStack, pConvertor->stack_pos, 0, 0, 0, conv_ptr - pConvertor->pBaseBuf);
+                    //Return converted bytes
+                    pConvertor->bConverted += total_unpacked;
+                    return 0;    
+                }
+                // Unpack data into user memory
+                pData->unpack_func(iov_ptr, conv_ptr);
+                // Update input and output pointer
+                conv_ptr += (dt_size_true + align_offset);
+                iov_ptr += dt_size_packed;
+                total_unpacked += dt_size_packed;
+                // Decrease datatype count
+                pStack->count--;
+            }
+        }
+        else
+        {
+            // Unpacking from buffer provided by lower layer not yet possible
+            if( (cont_ptr + iov_len_local) <= (pConvertor->pTmpBaseBuf + dt_size_packed))
+            {
+                //Copy as much bytes as possible
+                memcpy(cont_ptr, iov_ptr, iov_len_local);
+                cont_ptr += iov_len_local;
+            }
+            else
+            {
+                size_t bytes_left = pConvertor->pTmpBaseBuf + dt_size_packed - cont_ptr;
+                //Copy as much bytes as possible
+                memcpy(cont_ptr, iov_ptr, bytes_left);
+                cont_ptr += bytes_left;
+                *max_data = bytes_left;
+            }
+            
+            if (cont_ptr == (pConvertor->pTmpBaseBuf + dt_size_packed))
+            {
+                //Unpack dataytpe element 
+                pData->unpack_func(pConvertor->pTmpBaseBuf, conv_ptr); 
+                //Update conversion pointer
+                conv_ptr += (dt_size_true + align_offset);
+                pStack->disp  = conv_ptr - pConvertor->pBaseBuf;
+                //Reset contigous pointer
+                cont_ptr = pConvertor->pTmpBaseBuf;
+                //Unpacked one full datatype element
+                pStack->count--;
+                
+                // if count is 0 no further unpacking required
+                if(0 == pStack->count)
+                {
+                    break;
+                }
+            }
+
+            // Push stack
+            PUSH_STACK(pStack, pConvertor->stack_pos, 0, 0, 0, cont_ptr - pConvertor->pTmpBaseBuf);
+            // Update already converted bytes
+            pConvertor->bConverted += *max_data;
+            return 0;
+        }
+    }
+    // In case used free temp buf
+    if(NULL != pConvertor->pTmpBaseBuf)
+    {
+        free(pConvertor->pTmpBaseBuf);
+    }
+    // Convertion completed
+    pConvertor->flags |= CONVERTOR_COMPLETED;
+    return 1;
 }

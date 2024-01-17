@@ -54,7 +54,9 @@ int32_t opal_generic_simple_unpack(opal_convertor_t *pConvertor, struct iovec *i
                                    uint32_t *out_size, size_t *max_data);
 int32_t opal_generic_simple_unpack_checksum(opal_convertor_t *pConvertor, struct iovec *iov,
                                             uint32_t *out_size, size_t *max_data);
-int32_t libddtpack_wrapper(opal_convertor_t *pConvertor, struct iovec *iov,
+int32_t libddtpack_pack(opal_convertor_t *pConvertor, struct iovec *iov,
+                                            uint32_t *out_size, size_t *max_data);
+int32_t libddtpack_unpack(opal_convertor_t *pConvertor, struct iovec *iov,
                                             uint32_t *out_size, size_t *max_data);
 
 END_C_DECLS
