@@ -80,7 +80,7 @@ BEGIN_C_DECLS
 #define OPAL_DATATYPE_FLAG_DATA    0x0100 /**< data or control structure */
 
 /* flags for libddtpack integration */
-#define OPAL_DATATYPE_FLAG_OPTIMIZED_PACKING 0x0200
+#define OPAL_DATATYPE_FLAG_OPTIMIZED_PACKING 0x01
 
 /*
  * We should make the difference here between the predefined contiguous and non contiguous
@@ -150,7 +150,7 @@ struct opal_datatype_t {
     /* Additional changes for libddtpack integration */
     ddtpack_pack pack_func;
     ddtpack_unpack unpack_func;
-
+    uint8_t flags_ddtpack;
     /* size: 352, cachelines: 6, members: 15 */
     /* last cacheline: 28-32 bytes */
 };

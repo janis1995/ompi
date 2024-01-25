@@ -346,11 +346,15 @@ int32_t opal_datatype_commit(opal_datatype_t *pData)
     if (0 == (pData->flags & OPAL_DATATYPE_FLAG_PREDEFINED))
     {
         //Set flag for optimized packing
-        pData->flags = pData->flags | OPAL_DATATYPE_FLAG_OPTIMIZED_PACKING;
+        pData->flags_ddtpack = OPAL_DATATYPE_FLAG_OPTIMIZED_PACKING;
         //Generate packing function
         pData->pack_func = ddtpack_generate_pack(pData);
         //Generate unpacking function
         pData->unpack_func = ddtpack_generate_unpack(pData);
+    }
+    else
+    {
+        pData->flags_ddtpack = 0;
     }
 
     return OPAL_SUCCESS;
