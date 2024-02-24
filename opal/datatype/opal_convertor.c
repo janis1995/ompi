@@ -599,7 +599,8 @@ int32_t opal_convertor_prepare_for_recv(opal_convertor_t *convertor,
         } else {
             if (convertor->pDesc->flags & OPAL_DATATYPE_FLAG_CONTIGUOUS) {
                 convertor->fAdvance = opal_unpack_homogeneous_contig;
-            } else if (datatype->flags_ddtpack & OPAL_DATATYPE_FLAG_OPTIMIZED_PACKING) {
+            } else if (datatype->ddtpack_hndl.flags & OPAL_DATATYPE_FLAG_OPTIMIZED_PACKING) {
+                printf("Using libddtpack for unpacking\n");
                 convertor->fAdvance = libddtpack_unpack; 
             } else {
                 convertor->fAdvance = opal_generic_simple_unpack;
@@ -652,7 +653,8 @@ int32_t opal_convertor_prepare_for_send(opal_convertor_t *convertor,
                 } else {
                                         convertor->fAdvance = opal_pack_homogeneous_contig_with_gaps;
                 }
-            } else if (datatype->flags_ddtpack & OPAL_DATATYPE_FLAG_OPTIMIZED_PACKING) {
+            } else if (datatype->ddtpack_hndl.flags & OPAL_DATATYPE_FLAG_OPTIMIZED_PACKING) {
+                printf("Using libddtpack for packing\n");
                 convertor->fAdvance = libddtpack_pack;
             } else {
                 convertor->fAdvance = opal_generic_simple_pack;

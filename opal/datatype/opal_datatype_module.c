@@ -242,6 +242,9 @@ static void opal_datatype_finalize(void)
     /* clear all master convertors */
     opal_convertor_destroy_masters();
 
+    // Call finalize function for libddtpack
+    ddtpack_finalize();
+
     opal_output_close(opal_datatype_dfd);
     opal_datatype_dfd = -1;
 }
@@ -284,6 +287,9 @@ int32_t opal_datatype_init(void)
     }
 
     opal_finalize_register_cleanup(opal_datatype_finalize);
+
+    // Call init function for libddtpack
+    ddtpack_init();
 
     return OPAL_SUCCESS;
 }

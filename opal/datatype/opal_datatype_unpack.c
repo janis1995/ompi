@@ -747,7 +747,7 @@ int32_t libddtpack_unpack_function(opal_convertor_t *pConvertor, struct iovec *i
                     return 0;    
                 }
                 // Unpack data into user memory
-                pData->unpack_func(iov_ptr, conv_ptr);
+                pData->ddtpack_hndl.unpack_func(iov_ptr, conv_ptr);
                 // Update input and output pointer
                 conv_ptr += (dt_size_true + align_offset);
                 iov_ptr += dt_size_packed;
@@ -777,7 +777,7 @@ int32_t libddtpack_unpack_function(opal_convertor_t *pConvertor, struct iovec *i
             if (cont_ptr == (pConvertor->pTmpBaseBuf + dt_size_packed))
             {
                 //Unpack dataytpe element 
-                pData->unpack_func(pConvertor->pTmpBaseBuf, conv_ptr); 
+                pData->ddtpack_hndl.unpack_func(pConvertor->pTmpBaseBuf, conv_ptr); 
                 //Update conversion pointer
                 conv_ptr += (dt_size_true + align_offset);
                 pStack->disp  = conv_ptr - pConvertor->pBaseBuf;

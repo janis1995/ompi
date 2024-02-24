@@ -46,6 +46,12 @@ int32_t opal_datatype_clone(const opal_datatype_t *src_type, opal_datatype_t *de
     dest_type->ptypes = NULL;
     dest_type->desc.desc = temp;
 
+    //Clone datatype in libddtpack aswell
+    if(0 != src_type->ddtpack_hndl.flags)
+    {    
+        ddtpack_clone((ddtpack_datatype_s*)src_type);
+    }
+
     /**
      * Allow duplication of MPI_UB and MPI_LB.
      */

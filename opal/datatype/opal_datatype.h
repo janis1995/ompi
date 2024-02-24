@@ -139,6 +139,8 @@ struct opal_datatype_t {
     dt_type_desc_t desc;             /**< the data description */
     dt_type_desc_t opt_desc; /**< short description of the data used when conversion is useless
                                   or in the send case (without conversion) */
+    /* Libddtpack handle used for accessing generated packing + unpacking routines */
+    ddtpack_handle_s ddtpack_hndl;
 
     size_t *ptypes; /**< array of basic predefined types that facilitate the computing
                          of the remote size in heterogeneous environments. The length of the
@@ -147,10 +149,6 @@ struct opal_datatype_t {
                          layer). This field should never be initialized in homogeneous
                          environments */
     /* --- cacheline 5 boundary (320 bytes) was 32-36 bytes ago --- */
-    /* Additional changes for libddtpack integration */
-    ddtpack_pack pack_func;
-    ddtpack_unpack unpack_func;
-    uint8_t flags_ddtpack;
     /* size: 352, cachelines: 6, members: 15 */
     /* last cacheline: 28-32 bytes */
 };

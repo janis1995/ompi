@@ -86,6 +86,12 @@ int32_t ompi_datatype_destroy( ompi_datatype_t** type)
 
     if( ompi_datatype_is_predefined(pData) && (pData->super.super.obj_reference_count <= 1) )
         return OMPI_ERROR;
+    
+    if(0 != pData->super.ddtpack_hndl.flags)
+    {
+        // Free up memory used for generated packing code
+        ddtpack_destroy((ddtpack_datatype_s*)&pData->super);
+    }
 
     OBJ_RELEASE(pData);
     *type = NULL;

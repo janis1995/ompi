@@ -674,7 +674,7 @@ int32_t libddtpack_pack_function(opal_convertor_t *pConvertor, struct iovec *iov
             //Init contiguous pointer
             cont_ptr = pConvertor->pTmpBaseBuf;
             // Pack data in contiguous memory
-            pData->pack_func(conv_ptr, pConvertor->pTmpBaseBuf);
+            pData->ddtpack_hndl.pack_func(conv_ptr, pConvertor->pTmpBaseBuf);
         }
 
         if (NULL == pConvertor->pTmpBaseBuf)
@@ -694,7 +694,7 @@ int32_t libddtpack_pack_function(opal_convertor_t *pConvertor, struct iovec *iov
                     return 0;    
                 }
                 // Pack data into network buffer
-                pData->pack_func(conv_ptr, iov_ptr);
+                pData->ddtpack_hndl.pack_func(conv_ptr, iov_ptr);
                 // Update input and output pointer
                 conv_ptr += (dt_size_true + align_offset);
                 iov_ptr += dt_size_packed;
@@ -734,7 +734,7 @@ int32_t libddtpack_pack_function(opal_convertor_t *pConvertor, struct iovec *iov
                 if(0 != pStack->count)
                 {
                     //Pack next dataytpe elm in contiguous memory
-                    pData->pack_func(conv_ptr, pConvertor->pTmpBaseBuf); 
+                    pData->ddtpack_hndl.pack_func(conv_ptr, pConvertor->pTmpBaseBuf); 
                 }
                 else
                 {

@@ -31,6 +31,12 @@ int32_t opal_datatype_destroy(opal_datatype_t **dt)
         return OPAL_ERROR;
     }
 
+    if(0 != pData->ddtpack_hndl.flags)
+    {
+        // Free up memory used for generated packing code
+        ddtpack_destroy((ddtpack_datatype_s*)pData);
+    }
+
     OBJ_RELEASE(pData);
     *dt = NULL;
     return OPAL_SUCCESS;
