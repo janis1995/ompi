@@ -721,13 +721,14 @@ int32_t libddtpack_unpack_function(opal_convertor_t *pConvertor, struct iovec *i
         iov_ptr = (unsigned char *) iov[iov_count].iov_base;
         iov_len_local = iov[iov_count].iov_len;
 
-        // In case datatype doesn't fit in network buffer allocate memory for unpacking
-        if((dt_size_packed > iov_len_local) && (NULL == pConvertor->pTmpBaseBuf))
+        // In case datatype doesn't fit in network buffer or received buffer crosses full datatype boundarys allocate memory for unpacking
+        if((NULL == pConvertor->pTmpBaseBuf) && 
+        ((dt_size_packed > iov_len_local) || ((pConvertor->bConverted % dt_size_packed) != 0) || ((iov_len_local % dt_size_packed) != 0)))
         {
             //Allocate memory for one datatype
-            pConvertor->pTmpBaseBuf = malloc(dt_size_packed);
-            //Init contiguous pointer
-            cont_ptr = pConvertor->pTmpBaseBuf;
+            pConvertor->pTmpBaseBuf = malloc(pConvertor->local_size);
+            //Init contiguous pointer to really received and converted bytes
+            cont_ptr = pConvertor->pTmpBaseBuf + pConvertor->bReceived;
         }
 
         if (NULL == pConvertor->pTmpBaseBuf)
@@ -736,7 +737,7 @@ int32_t libddtpack_unpack_function(opal_convertor_t *pConvertor, struct iovec *i
             while(pStack->count > 0)
             {
                 if((total_unpacked + dt_size_packed) > iov_len_local)
-                {
+                {   
                     //Update length of packed data
                     *max_data = total_unpacked;
                     //Save displacement of convertion pointer
@@ -744,6 +745,7 @@ int32_t libddtpack_unpack_function(opal_convertor_t *pConvertor, struct iovec *i
                     PUSH_STACK(pStack, pConvertor->stack_pos, 0, 0, 0, conv_ptr - pConvertor->pBaseBuf);
                     //Return converted bytes
                     pConvertor->bConverted += total_unpacked;
+                    pConvertor->bReceived += total_unpacked;
                     return 0;    
                 }
                 // Unpack data into user memory
@@ -758,45 +760,32 @@ int32_t libddtpack_unpack_function(opal_convertor_t *pConvertor, struct iovec *i
         }
         else
         {
-            // Unpacking from buffer provided by lower layer not yet possible
-            if( (cont_ptr + iov_len_local) <= (pConvertor->pTmpBaseBuf + dt_size_packed))
-            {
-                //Copy as much bytes as possible
-                memcpy(cont_ptr, iov_ptr, iov_len_local);
-                cont_ptr += iov_len_local;
-            }
-            else
-            {
-                size_t bytes_left = pConvertor->pTmpBaseBuf + dt_size_packed - cont_ptr;
-                //Copy as much bytes as possible
-                memcpy(cont_ptr, iov_ptr, bytes_left);
-                cont_ptr += bytes_left;
-                *max_data = bytes_left;
-            }
+            // Copy received communication buffer to pTmpBasebuf
+            memcpy(pConvertor->pTmpBaseBuf + pConvertor->bConverted, iov_ptr, iov_len_local);
             
-            if (cont_ptr == (pConvertor->pTmpBaseBuf + dt_size_packed))
+            // Update already converted bytes
+            pConvertor->bConverted += *max_data;
+            pConvertor->bReceived += *max_data;
+
+            if (pConvertor->bReceived == pConvertor->local_size)
             {
-                //Unpack dataytpe element 
-                pData->ddtpack_hndl.unpack_func(pConvertor->pTmpBaseBuf, conv_ptr); 
-                //Update conversion pointer
-                conv_ptr += (dt_size_true + align_offset);
-                pStack->disp  = conv_ptr - pConvertor->pBaseBuf;
-                //Reset contigous pointer
-                cont_ptr = pConvertor->pTmpBaseBuf;
-                //Unpacked one full datatype element
-                pStack->count--;
-                
-                // if count is 0 no further unpacking required
-                if(0 == pStack->count)
+                //Unpack all remaining datatypes
+                while(pStack->count > 0)
                 {
-                    break;
+                    // Unpack data into user memory
+                    pData->ddtpack_hndl.unpack_func(cont_ptr, conv_ptr);
+                    // Update input and output pointer
+                    conv_ptr += (dt_size_true + align_offset);
+                    cont_ptr += dt_size_packed;
+                    // Decrease datatype count
+                    pStack->count--;
                 }
+                break;
             }
 
             // Push stack
             PUSH_STACK(pStack, pConvertor->stack_pos, 0, 0, 0, cont_ptr - pConvertor->pTmpBaseBuf);
-            // Update already converted bytes
-            pConvertor->bConverted += *max_data;
+            
             return 0;
         }
     }
@@ -804,6 +793,7 @@ int32_t libddtpack_unpack_function(opal_convertor_t *pConvertor, struct iovec *i
     if(NULL != pConvertor->pTmpBaseBuf)
     {
         free(pConvertor->pTmpBaseBuf);
+        pConvertor->pTmpBaseBuf = NULL;
     }
     // Convertion completed
     pConvertor->flags |= CONVERTOR_COMPLETED;

@@ -500,6 +500,7 @@ size_t opal_convertor_compute_remote_size(opal_convertor_t *pConvertor)
         convertor->bConverted = 0;                                                              \
         convertor->use_desc = &(datatype->opt_desc);                                            \
         convertor->pTmpBaseBuf = NULL;                                                          \
+        convertor->bReceived = 0;                                                               \
         /* If the data is empty we just mark the convertor as                                   \
          * completed. With this flag set the pack and unpack functions                          \
          * will not do anything.                                                                \
