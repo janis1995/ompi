@@ -14,7 +14,7 @@
  * Copyright (c) 2009-2012 Cisco Systems, Inc.  All rights reserved.
  * Copyright (c) 2010-2017 Los Alamos National Security, LLC. All rights
  *                         reserved.
- * Copyright (c) 2012-2015 NVIDIA Corporation.  All rights reserved.
+ * Copyright (c) 2012-2024 NVIDIA Corporation.  All rights reserved.
  * Copyright (c) 2012      Oracle and/or its affiliates.  All rights reserved.
  * Copyright (c) 2014-2017 Research Organization for Information Science
  *                         and Technology (RIST). All rights reserved.
@@ -23,6 +23,7 @@
  * Copyright (c) 2022      IBM Corporation. All rights reserved
  * Copyright (c) 2023      Triad National Security, LLC. All rights
  *                         reserved.
+ * Copyright (c) 2023      Advanced Micro Devices, Inc. All rights reserved.
  * $COPYRIGHT$
  *
  * Additional copyrights may follow
@@ -71,8 +72,7 @@
 #include "btl_smcuda_frag.h"
 #include "btl_smcuda_accelerator.h"
 
-
-#include "opal/include/opal/opal_cuda.h"
+#include "opal/include/opal/opal_gpu.h"
 
 static struct mca_btl_base_registration_handle_t *
 mca_btl_smcuda_register_mem(struct mca_btl_base_module_t *btl,
@@ -216,15 +216,14 @@ static int smcuda_btl_first_time_init(mca_btl_smcuda_t *smcuda_btl, int32_t my_s
 {
     size_t length, length_payload;
     sm_fifo_t *my_fifos;
-    int my_mem_node, num_mem_nodes, i, rc;
     mca_common_sm_mpool_resources_t *res = NULL;
-    mca_btl_smcuda_component_t *m = &mca_btl_smcuda_component;
     char *loc, *mynuma;
     opal_process_name_t wildcard_rank;
+    int rc;
 
     /* Assume we don't have hwloc support and fill in dummy info */
-    mca_btl_smcuda_component.mem_node = my_mem_node = 0;
-    mca_btl_smcuda_component.num_mem_nodes = num_mem_nodes = 1;
+    mca_btl_smcuda_component.mem_node = -1;
+    mca_btl_smcuda_component.num_mem_nodes = 1;
 
     /* see if we were given a topology signature */
     wildcard_rank.jobid = OPAL_PROC_MY_NAME.jobid;
@@ -232,14 +231,14 @@ static int smcuda_btl_first_time_init(mca_btl_smcuda_t *smcuda_btl, int32_t my_s
     OPAL_MODEX_RECV_VALUE_OPTIONAL(rc, PMIX_TOPOLOGY_SIGNATURE, &wildcard_rank, &loc, PMIX_STRING);
     if (OPAL_SUCCESS == rc) {
         /* the number of NUMA nodes is right at the front */
-        mca_btl_smcuda_component.num_mem_nodes = num_mem_nodes = strtoul(loc, NULL, 10);
+        mca_btl_smcuda_component.num_mem_nodes = strtoul(loc, NULL, 10);
         free(loc);
     } else {
         /* If we have hwloc support, then get accurate information */
         loc = NULL;
         if (OPAL_SUCCESS == opal_hwloc_base_get_topology()) {
-            i = opal_hwloc_base_get_nbobjs_by_type(opal_hwloc_topology, HWLOC_OBJ_NODE, 0,
-                                                   OPAL_HWLOC_AVAILABLE);
+            rc = opal_hwloc_base_get_nbobjs_by_type(opal_hwloc_topology, HWLOC_OBJ_NODE, 0,
+                                                    OPAL_HWLOC_AVAILABLE);
 
             /* JMS This tells me how many numa nodes are *available*,
                but it's not how many are being used *by this job*.
@@ -247,25 +246,22 @@ static int smcuda_btl_first_time_init(mca_btl_smcuda_t *smcuda_btl, int32_t my_s
                the previous carto-based implementation), but it really
                should be improved to be how many NUMA nodes are being
                used *in this job*. */
-            mca_btl_smcuda_component.num_mem_nodes = num_mem_nodes = i;
+            mca_btl_smcuda_component.num_mem_nodes = rc;
         }
     }
     /* see if we were given our location */
     OPAL_MODEX_RECV_VALUE_OPTIONAL(rc, PMIX_LOCALITY_STRING, &OPAL_PROC_MY_NAME, &loc, PMIX_STRING);
     if (OPAL_SUCCESS == rc) {
-        if (NULL == loc) {
-            mca_btl_smcuda_component.mem_node = my_mem_node = -1;
-        } else {
+        if (NULL != loc) {
             /* get our NUMA location */
             mynuma = opal_hwloc_base_get_location(loc, HWLOC_OBJ_NODE, 0);
             if (NULL == mynuma || NULL != strchr(mynuma, ',') || NULL != strchr(mynuma, '-')) {
                 /* we either have no idea what NUMA we are on, or we
                  * are on multiple NUMA nodes */
-                mca_btl_smcuda_component.mem_node = my_mem_node = -1;
+                mca_btl_smcuda_component.mem_node = -1;
             } else {
                 /* we are bound to a single NUMA node */
-                my_mem_node = strtoul(mynuma, NULL, 10);
-                mca_btl_smcuda_component.mem_node = my_mem_node;
+                mca_btl_smcuda_component.mem_node = strtoul(mynuma, NULL, 10);
             }
             if (NULL != mynuma) {
                 free(mynuma);
@@ -274,14 +270,14 @@ static int smcuda_btl_first_time_init(mca_btl_smcuda_t *smcuda_btl, int32_t my_s
         }
     } else {
         /* If we have hwloc support, then get accurate information */
-        if (OPAL_SUCCESS == opal_hwloc_base_get_topology() && num_mem_nodes > 0
+        if (OPAL_SUCCESS == opal_hwloc_base_get_topology() && mca_btl_smcuda_component.num_mem_nodes > 0
             && NULL != opal_process_info.cpuset) {
             int numa = 0, w;
             unsigned n_bound = 0;
             hwloc_obj_t obj;
 
             /* count the number of NUMA nodes to which we are bound */
-            for (w = 0; w < i; w++) {
+            for (w = 0; w < mca_btl_smcuda_component.num_mem_nodes; w++) {
                 if (NULL
                     == (obj = opal_hwloc_base_get_obj_by_type(opal_hwloc_topology, HWLOC_OBJ_NODE,
                                                               0, w, OPAL_HWLOC_AVAILABLE))) {
@@ -297,11 +293,19 @@ static int smcuda_btl_first_time_init(mca_btl_smcuda_t *smcuda_btl, int32_t my_s
              * a NUMA we are on, then not much we can do
              */
             if (1 == n_bound) {
-                mca_btl_smcuda_component.mem_node = my_mem_node = numa;
-            } else {
-                mca_btl_smcuda_component.mem_node = my_mem_node = -1;
+                mca_btl_smcuda_component.mem_node = numa;
             }
         }
+    }
+    /* sanity check: do we have the NUMA node info ? */
+    if( mca_btl_smcuda_component.mem_node < 0 ||
+        mca_btl_smcuda_component.num_mem_nodes < 1) {
+        opal_output_verbose(10, opal_btl_base_framework.framework_output,
+                            "btl:smcuda: %s unable to find topological information mem_node=%d, num_mem_nodes=%d",
+                            OPAL_NAME_PRINT(OPAL_PROC_MY_NAME),
+                            mca_btl_smcuda_component.mem_node, mca_btl_smcuda_component.num_mem_nodes);
+        mca_btl_smcuda_component.mem_node = 0;
+        mca_btl_smcuda_component.num_mem_nodes = 1;
     }
 
     if (NULL == (res = calloc(1, sizeof(*res)))) {
@@ -310,14 +314,14 @@ static int smcuda_btl_first_time_init(mca_btl_smcuda_t *smcuda_btl, int32_t my_s
 
     /* lookup shared memory pool */
     mca_btl_smcuda_component.sm_mpools = (mca_mpool_base_module_t **)
-        calloc(num_mem_nodes, sizeof(mca_mpool_base_module_t *));
+        calloc(mca_btl_smcuda_component.num_mem_nodes, sizeof(mca_mpool_base_module_t *));
 
     /* Disable memory binding, because each MPI process will claim pages in the
      * mpool for their local NUMA node */
     res->mem_node = -1;
     res->allocator = mca_btl_smcuda_component.allocator;
 
-    if (OPAL_SUCCESS != (rc = setup_mpool_base_resources(m, res))) {
+    if (OPAL_SUCCESS != (rc = setup_mpool_base_resources(&mca_btl_smcuda_component, res))) {
         free(res);
         return rc;
     }
@@ -344,7 +348,7 @@ static int smcuda_btl_first_time_init(mca_btl_smcuda_t *smcuda_btl, int32_t my_s
 
     /* remember that node rank zero is already attached */
     if (0 != my_smp_rank) {
-        if (OPAL_SUCCESS != (rc = sm_segment_attach(m))) {
+        if (OPAL_SUCCESS != (rc = sm_segment_attach(&mca_btl_smcuda_component))) {
             free(res);
             return rc;
         }
@@ -354,15 +358,15 @@ static int smcuda_btl_first_time_init(mca_btl_smcuda_t *smcuda_btl, int32_t my_s
      * local process to know which parts of the memory are being utilized by a
      * remote process. */
     opal_output_verbose(10, opal_btl_base_framework.framework_output,
-                        "btl:smcuda: CUDA cuMemHostRegister address=%p, size=%d",
+                        "btl:smcuda: host_register address=%p, size=%d",
                         mca_btl_smcuda_component.sm_mpool_base, (int) res->size);
-    if (0 == strcmp(opal_accelerator_base_selected_component.base_version.mca_component_name, "cuda")) {
-        rc = opal_accelerator.host_register(MCA_ACCELERATOR_NO_DEVICE_ID, mca_btl_smcuda_component.sm_mpool_base, res->size); 
+    if (0 != strcmp(opal_accelerator_base_selected_component.base_version.mca_component_name, "null")) {
+        rc = opal_accelerator.host_register(MCA_ACCELERATOR_NO_DEVICE_ID, mca_btl_smcuda_component.sm_mpool_base, res->size);
         if (OPAL_UNLIKELY(OPAL_SUCCESS != rc)) {
             /* If registering the memory fails, print a message and continue.
              * This is not a fatal error. */
             opal_output_verbose(10, opal_btl_base_framework.framework_output,
-                                "btl:smcuda: CUDA cuMemHostRegister failed");
+                                "btl:smcuda: host_register failed");
         }
     }
 
@@ -394,7 +398,7 @@ static int smcuda_btl_first_time_init(mca_btl_smcuda_t *smcuda_btl, int32_t my_s
     mca_btl_smcuda_component.shm_bases[mca_btl_smcuda_component.my_smp_rank]
         = (char *) mca_btl_smcuda_component.sm_mpool_base;
     mca_btl_smcuda_component.shm_mem_nodes[mca_btl_smcuda_component.my_smp_rank] = (uint16_t)
-        my_mem_node;
+        mca_btl_smcuda_component.mem_node;
 
     /* initialize the array of fifo's "owned" by this process */
     if (NULL == (my_fifos = (sm_fifo_t *) mpool_calloc(FIFO_MAP_NUM(n), sizeof(sm_fifo_t))))
@@ -420,45 +424,45 @@ static int smcuda_btl_first_time_init(mca_btl_smcuda_t *smcuda_btl, int32_t my_s
     /* allocation will be for the fragment descriptor and payload buffer */
     length = sizeof(mca_btl_smcuda_frag1_t);
     length_payload = sizeof(mca_btl_smcuda_hdr_t) + mca_btl_smcuda_component.eager_limit;
-    i = opal_free_list_init(&mca_btl_smcuda_component.sm_frags_eager, length, opal_cache_line_size,
-                            OBJ_CLASS(mca_btl_smcuda_frag1_t), length_payload, opal_cache_line_size,
-                            mca_btl_smcuda_component.sm_free_list_num,
-                            mca_btl_smcuda_component.sm_free_list_max,
-                            mca_btl_smcuda_component.sm_free_list_inc,
-                            mca_btl_smcuda_component.sm_mpool, 0, NULL, NULL, NULL);
-    if (OPAL_SUCCESS != i)
-        return i;
+    rc = opal_free_list_init(&mca_btl_smcuda_component.sm_frags_eager, length, opal_cache_line_size,
+                             OBJ_CLASS(mca_btl_smcuda_frag1_t), length_payload, opal_cache_line_size,
+                             mca_btl_smcuda_component.sm_free_list_num,
+                             mca_btl_smcuda_component.sm_free_list_max,
+                             mca_btl_smcuda_component.sm_free_list_inc,
+                             mca_btl_smcuda_component.sm_mpool, 0, NULL, NULL, NULL);
+    if (OPAL_SUCCESS != rc)
+        return rc;
 
     length = sizeof(mca_btl_smcuda_frag2_t);
     length_payload = sizeof(mca_btl_smcuda_hdr_t) + mca_btl_smcuda_component.max_frag_size;
-    i = opal_free_list_init(&mca_btl_smcuda_component.sm_frags_max, length, opal_cache_line_size,
-                            OBJ_CLASS(mca_btl_smcuda_frag2_t), length_payload, opal_cache_line_size,
-                            mca_btl_smcuda_component.sm_free_list_num,
-                            mca_btl_smcuda_component.sm_free_list_max,
-                            mca_btl_smcuda_component.sm_free_list_inc,
-                            mca_btl_smcuda_component.sm_mpool, 0, NULL, NULL, NULL);
-    if (OPAL_SUCCESS != i)
-        return i;
+    rc = opal_free_list_init(&mca_btl_smcuda_component.sm_frags_max, length, opal_cache_line_size,
+                             OBJ_CLASS(mca_btl_smcuda_frag2_t), length_payload, opal_cache_line_size,
+                             mca_btl_smcuda_component.sm_free_list_num,
+                             mca_btl_smcuda_component.sm_free_list_max,
+                             mca_btl_smcuda_component.sm_free_list_inc,
+                             mca_btl_smcuda_component.sm_mpool, 0, NULL, NULL, NULL);
+    if (OPAL_SUCCESS != rc)
+        return rc;
 
-    i = opal_free_list_init(&mca_btl_smcuda_component.sm_frags_user, sizeof(mca_btl_smcuda_user_t),
-                            opal_cache_line_size, OBJ_CLASS(mca_btl_smcuda_user_t),
-                            sizeof(mca_btl_smcuda_hdr_t), opal_cache_line_size,
-                            mca_btl_smcuda_component.sm_free_list_num,
-                            mca_btl_smcuda_component.sm_free_list_max,
-                            mca_btl_smcuda_component.sm_free_list_inc,
-                            mca_btl_smcuda_component.sm_mpool, 0, NULL, NULL, NULL);
-    if (OPAL_SUCCESS != i)
-        return i;
+    rc = opal_free_list_init(&mca_btl_smcuda_component.sm_frags_user, sizeof(mca_btl_smcuda_user_t),
+                             opal_cache_line_size, OBJ_CLASS(mca_btl_smcuda_user_t),
+                             sizeof(mca_btl_smcuda_hdr_t), opal_cache_line_size,
+                             mca_btl_smcuda_component.sm_free_list_num,
+                             mca_btl_smcuda_component.sm_free_list_max,
+                             mca_btl_smcuda_component.sm_free_list_inc,
+                             mca_btl_smcuda_component.sm_mpool, 0, NULL, NULL, NULL);
+    if (OPAL_SUCCESS != rc)
+        return rc;
 
     mca_btl_smcuda_component.num_outstanding_frags = 0;
 
     mca_btl_smcuda_component.num_pending_sends = 0;
-    i = opal_free_list_init(&mca_btl_smcuda_component.pending_send_fl,
-                            sizeof(btl_smcuda_pending_send_item_t), 8,
-                            OBJ_CLASS(opal_free_list_item_t), 0, 0, 16, -1, 32, NULL, 0, NULL, NULL,
-                            NULL);
-    if (OPAL_SUCCESS != i)
-        return i;
+    rc = opal_free_list_init(&mca_btl_smcuda_component.pending_send_fl,
+                             sizeof(btl_smcuda_pending_send_item_t), 8,
+                             OBJ_CLASS(opal_free_list_item_t), 0, 0, 16, -1, 32, NULL, 0, NULL, NULL,
+                             NULL);
+    if (OPAL_SUCCESS != rc)
+        return rc;
 
     /* set flag indicating btl has been inited */
     smcuda_btl->btl_inited = true;
@@ -471,7 +475,7 @@ static struct mca_btl_base_endpoint_t *create_sm_endpoint(int local_proc, struct
     struct mca_btl_base_endpoint_t *ep;
 
 #if OPAL_ENABLE_PROGRESS_THREADS == 1
-    char path[PATH_MAX];
+    char path[OPAL_PATH_MAX];
 #endif
 
     ep = (struct mca_btl_base_endpoint_t *) malloc(sizeof(struct mca_btl_base_endpoint_t));
@@ -877,7 +881,7 @@ int mca_btl_smcuda_sendi(struct mca_btl_base_module_t *btl,
     }
     /* Initiate setting up CUDA IPC support. */
 
-    if (0 == strcmp(opal_accelerator_base_selected_component.base_version.mca_component_name, "cuda") && (IPC_INIT == endpoint->ipcstate)
+    if (0 != strcmp(opal_accelerator_base_selected_component.base_version.mca_component_name, "null") && (IPC_INIT == endpoint->ipcstate)
         && mca_btl_smcuda_component.use_cuda_ipc) {
         mca_btl_smcuda_send_cuda_ipc_request(btl, endpoint);
     }
@@ -967,7 +971,7 @@ int mca_btl_smcuda_send(struct mca_btl_base_module_t *btl, struct mca_btl_base_e
         mca_btl_smcuda_component_progress();
     }
     /* Initiate setting up CUDA IPC support */
-    if (0 == strcmp(opal_accelerator_base_selected_component.base_version.mca_component_name, "cuda") && (IPC_INIT == endpoint->ipcstate)
+    if (0 != strcmp(opal_accelerator_base_selected_component.base_version.mca_component_name, "null") && (IPC_INIT == endpoint->ipcstate)
         && mca_btl_smcuda_component.use_cuda_ipc) {
         mca_btl_smcuda_send_cuda_ipc_request(btl, endpoint);
     }
@@ -1004,7 +1008,7 @@ mca_btl_smcuda_register_mem(struct mca_btl_base_module_t *btl,
                             uint32_t flags)
 {
     mca_btl_smcuda_t *smcuda_module = (mca_btl_smcuda_t *) btl;
-    mca_opal_cuda_reg_t *reg;
+    mca_opal_gpu_reg_t *reg;
     int access_flags = flags & MCA_BTL_REG_FLAG_ACCESS_ANY;
     int rcache_flags = 0;
 
@@ -1013,7 +1017,6 @@ mca_btl_smcuda_register_mem(struct mca_btl_base_module_t *btl,
         rcache_flags |= MCA_RCACHE_FLAGS_ACCELERATOR_MEM;
     }
 #endif
-
     smcuda_module->rcache->rcache_register(smcuda_module->rcache, base, size, rcache_flags,
                                            access_flags, (mca_rcache_base_registration_t **) &reg);
     if (OPAL_UNLIKELY(NULL == reg)) {
@@ -1027,9 +1030,8 @@ static int mca_btl_smcuda_deregister_mem(struct mca_btl_base_module_t *btl,
                                          struct mca_btl_base_registration_handle_t *handle)
 {
     mca_btl_smcuda_t *smcuda_module = (mca_btl_smcuda_t *) btl;
-    mca_opal_cuda_reg_t *reg = (mca_opal_cuda_reg_t
-                                             *) ((intptr_t) handle
-                                                 - offsetof(mca_opal_cuda_reg_t, data));
+    mca_opal_gpu_reg_t *reg = (mca_opal_gpu_reg_t *) ((intptr_t) handle
+                                                      - offsetof(mca_opal_gpu_reg_t, data));
 
     smcuda_module->rcache->rcache_deregister(smcuda_module->rcache, &reg->base);
 
@@ -1040,49 +1042,57 @@ static int mca_btl_smcuda_deregister_mem(struct mca_btl_base_module_t *btl,
  * Put remote event on stream to ensure that the the start of the
  * copy does not start until the completion of the event.
  */
-static void mca_btl_smcuda_wait_stream_synchronize(mca_opal_cuda_reg_t *rget_reg)
+static void mca_btl_smcuda_wait_stream_synchronize(mca_opal_gpu_reg_t *rget_reg)
 {
-#if OPAL_CUDA_SYNC_MEMOPS
-    /* No need for any of this with SYNC_MEMOPS feature */
-    return;
-#else /* OPAL_CUDA_SYNC_MEMOPS */
-    CUipcEventHandle evtHandle;
-    CUevent event;
-    CUresult result;
+    opal_accelerator_ipc_event_handle_t evtHandle;
+    opal_accelerator_event_t event;
+    int result;
 
-    memcpy(&evtHandle, rget_reg->data.evtHandle, sizeof(evtHandle));
-
-    result = cuIpcOpenEventHandle(&event, evtHandle);
-    if (OPAL_UNLIKELY(CUDA_SUCCESS != result)) {
-        opal_output_verbose(10, mca_btl_smcuda_component.cuda_ipc_output,
-                            "cuIpcOpenEventHandle failed");
+    if (opal_accelerator_use_sync_memops) {
+        /* No need for any of this with SYNC_MEMOPS feature */
+        return;
     }
 
-    /* BEGIN of Workaround - There is a bug in CUDA 4.1 RC2 and earlier
-     * versions.  Need to record an event on the stream, even though
+    result = opal_accelerator.import_ipc_event_handle(rget_reg->data.ipcEventHandle.handle, &evtHandle);
+    if (OPAL_UNLIKELY(OPAL_SUCCESS != result)) {
+        opal_output_verbose(10, mca_btl_smcuda_component.cuda_ipc_output,
+                            "import_ipc_event_handle failed");
+        return;
+    }
+
+    result = opal_accelerator.open_ipc_event_handle(&evtHandle, &event);
+    if (OPAL_UNLIKELY(OPAL_SUCCESS != result)) {
+        opal_output_verbose(10, mca_btl_smcuda_component.cuda_ipc_output,
+                            "open_ipc_event_handle failed");
+        return;
+    }
+
+#if 0
+    /* BEGIN of Workaround to deal with a bug in an early CUDA releases  (4.1. an older)
+     * Need to record an event on the stream, even though
      * it is not used, to make sure we do not short circuit our way
      * out of the cuStreamWaitEvent test.
      */
-    result = cuEventRecord(event, 0);
-    if (OPAL_UNLIKELY(CUDA_SUCCESS != result)) {
+    result = opal_accelerator.record_event(MCA_ACCELERATOR_NO_DEVICE_ID, &event, MCA_ACCELERATOR_STREAM_DEFAULT);
+    if (OPAL_UNLIKELY(OPAL_SUCCESS != result)) {
         opal_output_verbose(10, mca_btl_smcuda_component.cuda_ipc_output,
-                            "cuEventRecord failed");
+                            "record_event failed");
+        return;
     }
     /* END of Workaround */
+#endif
 
-    result = cuStreamWaitEvent(0, event, 0);
-    if (OPAL_UNLIKELY(CUDA_SUCCESS != result)) {
+    result = opal_accelerator.wait_event(MCA_ACCELERATOR_NO_DEVICE_ID, &event, MCA_ACCELERATOR_STREAM_DEFAULT);
+    if (OPAL_UNLIKELY(OPAL_SUCCESS != result)) {
         opal_output_verbose(10, mca_btl_smcuda_component.cuda_ipc_output,
-                            "cuStreamWaitEvent failed");
+                            "wait_event failed");
+        return;
     }
 
-    /* All done with this event. */
-    result = cuEventDestroy(event);
-    if (OPAL_UNLIKELY(CUDA_SUCCESS != result)) {
-        opal_output_verbose(10, mca_btl_smcuda_component.cuda_ipc_output,
-                            "cuStreamWaitEvent failed");
-    }
-#endif /* OPAL_CUDA_SYNC_MEMOPS */
+    // ipc event are assumed to be static, hence no OBJ_RELEASE
+    // but OBJ_DESTRUCT here.
+    OBJ_DESTRUCT(&event);
+    return;
 }
 
 int mca_btl_smcuda_get_cuda(struct mca_btl_base_module_t *btl, struct mca_btl_base_endpoint_t *ep,
@@ -1092,9 +1102,9 @@ int mca_btl_smcuda_get_cuda(struct mca_btl_base_module_t *btl, struct mca_btl_ba
                             int flags, int order, mca_btl_base_rdma_completion_fn_t cbfunc,
                             void *cbcontext, void *cbdata)
 {
-    mca_opal_cuda_reg_t rget_reg;
-    mca_opal_cuda_reg_t *reg_ptr = &rget_reg;
-    int rc, done;
+    mca_opal_gpu_reg_t rget_reg;
+    mca_opal_gpu_reg_t *reg_ptr = &rget_reg;
+    int rc;
     void *remote_memory_address;
     size_t offset;
     mca_btl_smcuda_frag_t *frag;
@@ -1121,13 +1131,14 @@ int mca_btl_smcuda_get_cuda(struct mca_btl_base_module_t *btl, struct mca_btl_ba
      * garbage in the debugger.  */
 
     memset(&rget_reg, 0, sizeof(rget_reg));
-    memcpy(&rget_reg.data.memHandle, remote_handle->reg_data.memHandle,
-           sizeof(remote_handle->reg_data.memHandle));
-#    if !OPAL_CUDA_SYNC_MEMOPS
-    /* Only need the remote event handle when syncing with remote events */
-    memcpy(&rget_reg.data.evtHandle, remote_handle->reg_data.evtHandle,
-           sizeof(remote_handle->reg_data.evtHandle));
-#    endif
+    memcpy(&rget_reg.data.ipcHandle.handle, remote_handle->reg_data.ipcHandle.handle,
+           sizeof(remote_handle->reg_data.ipcHandle.handle));
+
+    if (!opal_accelerator_use_sync_memops) {
+        /* Only need the remote event handle when syncing with remote events */
+        memcpy(&rget_reg.data.ipcEventHandle.handle, remote_handle->reg_data.ipcEventHandle.handle,
+               sizeof(remote_handle->reg_data.ipcEventHandle.handle));
+    }
 
     /* Open the memory handle to the remote memory.  If it is cached, then
      * we just retrieve it from cache and avoid a call to open the handle.  That
@@ -1248,12 +1259,13 @@ static void mca_btl_smcuda_send_cuda_ipc_request(struct mca_btl_base_module_t *b
      */
     OPAL_THREAD_ADD_FETCH32(&mca_btl_smcuda_component.num_outstanding_frags, +1);
     opal_output_verbose(10, mca_btl_smcuda_component.cuda_ipc_output,
-                        "Sending CUDA IPC REQ (try=%d): myrank=%d, mydev=%d, peerrank=%d",
+                        "Sending IPC REQ (try=%d): myrank=%d, mydev=%d, peerrank=%d",
                         endpoint->ipctries, mca_btl_smcuda_component.my_smp_rank, mydevnum,
                         endpoint->peer_smp_rank);
 
     MCA_BTL_SMCUDA_FIFO_WRITE(endpoint, endpoint->my_smp_rank, endpoint->peer_smp_rank,
                               (void *) VIRTUAL2RELATIVE(frag->hdr), false, true, rc);
+    (void)rc;
     return;
 }
 

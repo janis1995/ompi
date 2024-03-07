@@ -686,7 +686,7 @@ AC_CHECK_HEADERS([alloca.h aio.h arpa/inet.h dirent.h \
     sys/types.h sys/uio.h sys/un.h net/uio.h sys/utsname.h sys/vfs.h sys/wait.h syslog.h \
     termios.h ulimit.h unistd.h util.h utmp.h malloc.h \
     ifaddrs.h crt_externs.h regex.h mntent.h paths.h \
-    ioLib.h sockLib.h hostLib.h shlwapi.h sys/synch.h db.h ndbm.h ieee754.h])
+    ioLib.h sockLib.h hostLib.h shlwapi.h sys/synch.h db.h ndbm.h ieee754.h syslimits.h])
 
 AC_CHECK_HEADERS([sys/mount.h], [], [],
 [AC_INCLUDES_DEFAULT
@@ -1069,7 +1069,8 @@ AS_IF([test -z "$LEX" || \
 dnl Note that we have to double escape the URL below
 dnl so that the # it contains doesn't confuse the Autotools
 OAC_SETUP_SPHINX([$srcdir/docs/man/MPI_T.3],
-                 [[https://docs.open-mpi.org/en/main/developers/prerequisites.html#sphinx-and-therefore-python]])
+                 [[https://docs.open-mpi.org/en/main/developers/prerequisites.html#sphinx-and-therefore-python]],
+                 [$srcdir/docs/requirements.txt])
 
 #
 # File system case sensitivity

@@ -24,6 +24,8 @@
  * Copyright (c) 2019-2021 Google, Inc. All rights reserved.
  * Copyright (c) 2021      Nanook Consulting.  All rights reserved.
  * Copyright (c) 2022      IBM Corporation.  All rights reserved.
+ * Copyright (c) 2022      Computer Architecture and VLSI Systems (CARV)
+ *                         Laboratory, ICS Forth. All rights reserved.
  * $COPYRIGHT$
  *
  * Additional copyrights may follow
@@ -346,7 +348,7 @@ mca_btl_sm_component_init(int *num_btls, bool enable_progress_threads, bool enab
             mca_btl_sm.super.btl_max_send_size = mca_btl_sm.super.btl_eager_limit;
             mca_btl_sm.super.btl_min_rdma_pipeline_size = INT_MAX;
         }
-        if (mca_smsc_base_has_feature(MCA_SMSC_FEATURE_REQUIRE_REGISTATION)) {
+        if (mca_smsc_base_has_feature(MCA_SMSC_FEATURE_REQUIRE_REGISTRATION)) {
             ssize_t handle_size = mca_smsc_base_registration_data_size();
             if (handle_size > 0) {
                 mca_btl_sm.super.btl_registration_handle_size = (size_t) handle_size;
@@ -437,9 +439,9 @@ void mca_btl_sm_poll_handle_frag(mca_btl_sm_hdr_t *hdr, struct mca_btl_base_endp
                                               .cbdata = reg->cbdata};
 
     if (hdr->flags & MCA_BTL_SM_FLAG_SINGLE_COPY) {
-        void *ctx = MCA_SMSC_CALL(map_peer_region, endpoint->smsc_endpoint, /*flags=*/0,
-                                  hdr->sc_iov.iov_base, hdr->sc_iov.iov_len,
-                                  &segments[1].seg_addr.pval);
+        void *ctx = MCA_SMSC_CALL(map_peer_region, endpoint->smsc_endpoint,
+                                  MCA_RCACHE_FLAGS_PERSIST, hdr->sc_iov.iov_base,
+                                  hdr->sc_iov.iov_len, &segments[1].seg_addr.pval);
         assert(NULL != ctx);
 
         segments[1].seg_len = hdr->sc_iov.iov_len;

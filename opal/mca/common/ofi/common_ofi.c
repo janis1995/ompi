@@ -49,6 +49,15 @@ static int opal_common_ofi_init_ref_cnt = 0;
 static bool opal_common_ofi_installed_memory_monitor = false;
 #endif
 
+/* Count providers returns the number of providers present in an fi_info list
+ *     @param (IN) provider_list    struct fi_info* list of providers available
+ *
+ *     @param (OUT)                 int number of providers present in the list
+ *
+ *     returns 0 if the list is NULL
+ */
+static int count_providers(struct fi_info *provider_list);
+
 #ifdef HAVE_STRUCT_FI_OPS_MEM_MONITOR
 
 /*
@@ -270,6 +279,44 @@ int opal_common_ofi_is_in_list(char **list, char *item)
     }
 
     return 0;
+}
+
+int opal_common_ofi_count_providers_in_list(struct fi_info *provider_list, char **list)
+{
+    int count = 0, matched = 0;
+    struct fi_info *prov = provider_list, *prev_prov = NULL;
+    char *name;
+
+    while (prov) {
+        name = prov->fabric_attr->prov_name;
+        if (prev_prov && !strncasecmp(prev_prov->fabric_attr->prov_name, name, strlen(name))) {
+            /**
+             * Providers are usually sorted by name. We can reuse the previous matching result and
+             * avoid the potentially expensive list traversal.
+             */
+            count += matched;
+        } else if (opal_common_ofi_is_in_list(list, prov->fabric_attr->prov_name)) {
+            matched = 1;
+            ++count;
+        } else {
+            matched = 0;
+        }
+        prev_prov = prov;
+        prov = prov->next;
+    }
+
+    return count;
+}
+
+int opal_common_ofi_providers_subset_of_list(struct fi_info *provider_list, char **list)
+{
+    int num_prov = count_providers(provider_list);
+
+    if (!num_prov) {
+        return 1;
+    }
+
+    return num_prov == opal_common_ofi_count_providers_in_list(provider_list, list);
 }
 
 int opal_common_ofi_mca_register(const mca_base_component_t *component)
@@ -623,10 +670,10 @@ static int get_provider_distance(struct fi_info *provider, hwloc_topology_t topo
 /**
  * @brief Get the nearest device to the current thread
  *
- * Use the PMIx server or calculate the device distances, then out of the set of
- * returned distances find the subset of the nearest devices. This can be
- * 0 or more.
- * If there are multiple equidistant devices, break the tie using the rank.
+ * Compute the distances from the current thread to each NIC in provider_list,
+ * and select the NIC with the shortest distance.
+ * If there are multiple equidistant devices, break the tie using local rank
+ * to balance NIC utilization.
  *
  * @param[in]   topoloy          hwloc topology
  * @param[in]   provider_list    List of providers to select from
@@ -724,26 +771,49 @@ out:
     return ret;
 }
 
-static struct fi_info *select_provider_round_robin(struct fi_info *provider_list, uint32_t rank,
-                                                   size_t num_providers)
+/**
+ * @brief Selects a provider from the list in a round-robin fashion
+ *
+ * This function implements a round-robin algorithm to select a provider from
+ * the provided list based on a rank. Only providers of the same type as the
+ * first provider are eligible for selection.
+ *
+ * @param[in]   provider_list   A list of providers to select from.
+ * @param[out]  rank            A rank metric for the current process, such as
+ *                              the rank on the same node or CPU package.
+ * @return      Pointer to the selected provider
+ */
+static struct fi_info *select_provider_round_robin(struct fi_info *provider_list, uint32_t rank)
 {
-    uint32_t provider_rank = rank % num_providers;
-    struct fi_info *current_provider = provider_list;
+    uint32_t provider_rank = 0, current_rank = 0;
+    size_t num_providers = 0;
+    struct fi_info *current_provider = NULL;
 
-    for (uint32_t i = 0; i < provider_rank; ++i) {
+    for (current_provider = provider_list; NULL != current_provider;) {
+        if (OPAL_SUCCESS == check_provider_attr(provider_list, current_provider)) {
+            ++num_providers;
+        }
         current_provider = current_provider->next;
     }
 
+    current_provider = provider_list;
+    if (2 > num_providers) {
+        goto out;
+    }
+
+    provider_rank = rank % num_providers;
+
+    while (NULL != current_provider) {
+        if (OPAL_SUCCESS == check_provider_attr(provider_list, current_provider)
+            && provider_rank == current_rank++) {
+            break;
+        }
+        current_provider = current_provider->next;
+    }
+out:
     return current_provider;
 }
 
-/* Count providers returns the number of providers present in an fi_info list
- *     @param (IN) provider_list    struct fi_info* list of providers available
- *
- *     @param (OUT)                 int number of providers present in the list
- *
- *     returns 0 if the list is NULL
- */
 static int count_providers(struct fi_info *provider_list)
 {
     struct fi_info *dev = provider_list;
@@ -850,7 +920,7 @@ struct fi_info *opal_common_ofi_select_provider(struct fi_info *provider_list,
 {
     int ret, num_providers = 0;
     struct fi_info *provider = NULL;
-    uint32_t package_rank = 0;
+    uint32_t package_rank = process_info->my_local_rank;
 
     num_providers = count_providers(provider_list);
     if (!process_info->proc_is_bound || 2 > num_providers) {
@@ -868,6 +938,10 @@ struct fi_info *opal_common_ofi_select_provider(struct fi_info *provider_list,
     package_rank = get_package_rank(process_info);
 
 #if OPAL_OFI_PCI_DATA_AVAILABLE
+    /**
+     * If provider PCI BDF information is available, we calculate its physical distance
+     * to the current process, and select the provider with the shortest distance.
+     */
     ret = get_nearest_nic(opal_hwloc_topology, provider_list, num_providers, package_rank,
                           &provider);
     if (OPAL_SUCCESS == ret) {
@@ -876,7 +950,12 @@ struct fi_info *opal_common_ofi_select_provider(struct fi_info *provider_list,
 #endif /* OPAL_OFI_PCI_DATA_AVAILABLE */
 
 round_robin:
-    provider = select_provider_round_robin(provider_list, package_rank, num_providers);
+    if (!process_info->proc_is_bound && 1 < num_providers
+        && opal_output_get_verbosity(opal_common_ofi.output) >= 1) {
+        opal_show_help("help-common-ofi.txt", "unbound_process", true, 1);
+    }
+
+    provider = select_provider_round_robin(provider_list, package_rank);
 out:
 #if OPAL_ENABLE_DEBUG
     opal_output_verbose(1, opal_common_ofi.output, "package rank: %d device: %s", package_rank,
@@ -950,5 +1029,3 @@ error:
     }
     return ret;
 }
-
-

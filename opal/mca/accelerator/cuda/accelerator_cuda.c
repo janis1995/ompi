@@ -26,9 +26,10 @@
 static int accelerator_cuda_check_addr(const void *addr, int *dev_id, uint64_t *flags);
 static int accelerator_cuda_create_stream(int dev_id, opal_accelerator_stream_t **stream);
 
-static int accelerator_cuda_create_event(int dev_id, opal_accelerator_event_t **event);
+static int accelerator_cuda_create_event(int dev_id, opal_accelerator_event_t **event, bool enable_ipc);
 static int accelerator_cuda_record_event(int dev_id, opal_accelerator_event_t *event, opal_accelerator_stream_t *stream);
 static int accelerator_cuda_query_event(int dev_id, opal_accelerator_event_t *event);
+static int accelerator_cuda_wait_event(int dev_id, opal_accelerator_event_t *event, opal_accelerator_stream_t *stream);
 
 static int accelerator_cuda_memcpy_async(int dest_dev_id, int src_dev_id, void *dest, const void *src, size_t size,
                                   opal_accelerator_stream_t *stream, opal_accelerator_transfer_type_t type);
@@ -44,10 +45,16 @@ static int accelerator_cuda_get_address_range(int dev_id, const void *ptr, void 
 static bool accelerator_cuda_is_ipc_enabled(void);
 static int accelerator_cuda_get_ipc_handle(int dev_id, void *dev_ptr,
                                            opal_accelerator_ipc_handle_t *handle);
+static int accelerator_cuda_import_ipc_handle(int dev_id, uint8_t ipc_handle[IPC_MAX_HANDLE_SIZE],
+                                              opal_accelerator_ipc_handle_t *handle);
 static int accelerator_cuda_open_ipc_handle(int dev_id, opal_accelerator_ipc_handle_t *handle,
                                             void **dev_ptr);
+static int accelerator_cuda_compare_ipc_handles(uint8_t handle_1[IPC_MAX_HANDLE_SIZE],
+                                                uint8_t handle_2[IPC_MAX_HANDLE_SIZE]);
 static int accelerator_cuda_get_ipc_event_handle(opal_accelerator_event_t *event,
                                                  opal_accelerator_ipc_event_handle_t *handle);
+static int accelerator_cuda_import_ipc_event_handle(uint8_t ipc_handle[IPC_MAX_HANDLE_SIZE],
+                                                    opal_accelerator_ipc_event_handle_t *handle);
 static int accelerator_cuda_open_ipc_event_handle(opal_accelerator_ipc_event_handle_t *handle,
                                                   opal_accelerator_event_t *event);
 
@@ -60,6 +67,8 @@ static int accelerator_cuda_device_can_access_peer( int *access, int dev1, int d
 
 static int accelerator_cuda_get_buffer_id(int dev_id, const void *addr, opal_accelerator_buffer_id_t *buf_id);
 
+#define GET_STREAM(_stream) (_stream == MCA_ACCELERATOR_STREAM_DEFAULT ? 0 : *((CUstream *)_stream->stream))
+
 opal_accelerator_base_module_t opal_accelerator_cuda_module =
 {
     accelerator_cuda_check_addr,
@@ -69,6 +78,7 @@ opal_accelerator_base_module_t opal_accelerator_cuda_module =
     accelerator_cuda_create_event,
     accelerator_cuda_record_event,
     accelerator_cuda_query_event,
+    accelerator_cuda_wait_event,
 
     accelerator_cuda_memcpy_async,
     accelerator_cuda_memcpy,
@@ -79,8 +89,11 @@ opal_accelerator_base_module_t opal_accelerator_cuda_module =
 
     accelerator_cuda_is_ipc_enabled,
     accelerator_cuda_get_ipc_handle,
+    accelerator_cuda_import_ipc_handle,
     accelerator_cuda_open_ipc_handle,
+    accelerator_cuda_compare_ipc_handles,
     accelerator_cuda_get_ipc_event_handle,
+    accelerator_cuda_import_ipc_event_handle,
     accelerator_cuda_open_ipc_event_handle,
 
     accelerator_cuda_host_register,
@@ -260,7 +273,8 @@ static void opal_accelerator_cuda_stream_destruct(opal_accelerator_cuda_stream_t
 {
     CUresult result;
 
-    if (NULL != stream->base.stream) {
+    if (MCA_ACCELERATOR_STREAM_DEFAULT != (opal_accelerator_stream_t *)stream &&
+        NULL != stream->base.stream) {
         result = cuStreamDestroy(*(CUstream *)stream->base.stream);
         if (OPAL_UNLIKELY(CUDA_SUCCESS != result)) {
             opal_show_help("help-accelerator-cuda.txt", "cuStreamDestroy failed", true,
@@ -276,7 +290,7 @@ OBJ_CLASS_INSTANCE(
     NULL,
     opal_accelerator_cuda_stream_destruct);
 
-static int accelerator_cuda_create_event(int dev_id, opal_accelerator_event_t **event)
+static int accelerator_cuda_create_event(int dev_id, opal_accelerator_event_t **event, bool enable_ipc)
 {
     CUresult result;
     int delayed_init = opal_accelerator_cuda_delayed_init();
@@ -294,7 +308,8 @@ static int accelerator_cuda_create_event(int dev_id, opal_accelerator_event_t **
         OBJ_RELEASE(*event);
         return OPAL_ERR_OUT_OF_RESOURCE;
     }
-    result = cuEventCreate((*event)->event, CU_EVENT_DISABLE_TIMING);
+    result = cuEventCreate((*event)->event, enable_ipc ? CU_EVENT_DISABLE_TIMING|CU_EVENT_INTERPROCESS :
+			   CU_EVENT_DISABLE_TIMING);
     if (OPAL_UNLIKELY(CUDA_SUCCESS != result)) {
         opal_show_help("help-accelerator-cuda.txt", "cuEventCreate failed", true,
                        OPAL_PROC_MY_HOSTNAME, result);
@@ -328,11 +343,13 @@ static int accelerator_cuda_record_event(int dev_id, opal_accelerator_event_t *e
 {
     CUresult result;
 
-    if (NULL == stream || NULL == event) {
+    if ((MCA_ACCELERATOR_STREAM_DEFAULT != stream &&
+        (NULL == stream || NULL == stream->stream)) ||
+        NULL == event) {
         return OPAL_ERR_BAD_PARAM;
     }
 
-    result = cuEventRecord(*(CUevent *)event->event, *(CUstream *)stream->stream);
+    result = cuEventRecord(*(CUevent *)event->event, GET_STREAM(stream));
     if (OPAL_UNLIKELY(CUDA_SUCCESS != result)) {
         opal_show_help("help-accelerator-cuda.txt", "cuEventRecord failed", true,
                        OPAL_PROC_MY_HOSTNAME, result);
@@ -369,6 +386,10 @@ static int accelerator_cuda_query_event(int dev_id, opal_accelerator_event_t *ev
             }
     }
 }
+static int accelerator_cuda_wait_event(int dev_id, opal_accelerator_event_t *event, opal_accelerator_stream_t *stream)
+{
+    return OPAL_ERR_NOT_IMPLEMENTED;
+}
 
 static int accelerator_cuda_memcpy_async(int dest_dev_id, int src_dev_id, void *dest, const void *src, size_t size,
                                   opal_accelerator_stream_t *stream, opal_accelerator_transfer_type_t type)
@@ -380,11 +401,15 @@ static int accelerator_cuda_memcpy_async(int dest_dev_id, int src_dev_id, void *
         return delayed_init;
     }
 
-    if (NULL == stream || NULL == dest || NULL == src || size <= 0) {
+    if ((MCA_ACCELERATOR_STREAM_DEFAULT != stream && NULL == stream) ||
+        NULL == dest || NULL == src || size < 0) {
         return OPAL_ERR_BAD_PARAM;
     }
+    if (0 == size) {
+        return OPAL_SUCCESS;
+    }
 
-    result = cuMemcpyAsync((CUdeviceptr) dest, (CUdeviceptr) src, size, *(CUstream *)stream->stream);
+    result = cuMemcpyAsync((CUdeviceptr) dest, (CUdeviceptr) src, size, GET_STREAM(stream));
     if (OPAL_UNLIKELY(CUDA_SUCCESS != result)) {
         opal_show_help("help-accelerator-cuda.txt", "cuMemcpyAsync failed", true, dest, src,
                        size, result);
@@ -403,8 +428,11 @@ static int accelerator_cuda_memcpy(int dest_dev_id, int src_dev_id, void *dest, 
         return delayed_init;
     }
 
-    if (NULL == dest || NULL == src || size <= 0) {
+    if (NULL == dest || NULL == src || size < 0) {
         return OPAL_ERR_BAD_PARAM;
+    }
+    if (0 == size) {
+        return OPAL_SUCCESS;
     }
 
     /* Async copy then synchronize is the default behavior as some applications
@@ -547,14 +575,32 @@ static int accelerator_cuda_get_ipc_handle(int dev_id, void *dev_ptr,
     return OPAL_ERR_NOT_IMPLEMENTED;
 }
 
+static int accelerator_cuda_import_ipc_handle(int dev_id, uint8_t ipc_handle[IPC_MAX_HANDLE_SIZE],
+                                              opal_accelerator_ipc_handle_t *handle)
+{
+    return OPAL_ERR_NOT_IMPLEMENTED;
+}
+
 static int accelerator_cuda_open_ipc_handle(int dev_id, opal_accelerator_ipc_handle_t *handle,
                                             void **dev_ptr)
 {
     return OPAL_ERR_NOT_IMPLEMENTED;
 }
 
+static int accelerator_cuda_compare_ipc_handles(uint8_t handle_1[IPC_MAX_HANDLE_SIZE],
+                                                uint8_t handle_2[IPC_MAX_HANDLE_SIZE])
+{
+    return memcmp(handle_1, handle_2, IPC_MAX_HANDLE_SIZE);
+}
+
 static int accelerator_cuda_get_ipc_event_handle(opal_accelerator_event_t *event,
                                                  opal_accelerator_ipc_event_handle_t *handle)
+{
+    return OPAL_ERR_NOT_IMPLEMENTED;
+}
+
+static int accelerator_cuda_import_ipc_event_handle(uint8_t ipc_handle[IPC_MAX_HANDLE_SIZE],
+                                                    opal_accelerator_ipc_event_handle_t *handle)
 {
     return OPAL_ERR_NOT_IMPLEMENTED;
 }

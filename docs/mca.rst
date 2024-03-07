@@ -81,8 +81,9 @@ type of component, it may support multiple components of that type.
 Some of the more common frameworks that users may want or need to
 customize include the following:
 
-* ``btl``: Byte Transport Layer; these components are exclusively used
-  as the underlying transports for the ``ob1`` PML component.
+* ``btl``: Byte Transport Layer; these components are used as the
+  underlying transports for the ``ob1`` PML component and ``rdma``
+  OSC component.
 * ``coll``: MPI collective algorithms
 * ``io``: MPI I/O
 * ``mtl``: MPI Matching Transport Layer (MTL); these components are
@@ -520,6 +521,8 @@ clearly contradict each other.
 
 /////////////////////////////////////////////////////////////////////////
 
+.. _label-mca-common-parameters:
+
 Common MCA parameters
 ---------------------
 
@@ -592,7 +595,7 @@ presented here so that they can easily be found via internet searches:
   .. important:: You can only use the "include" *or* the "exclude"
                  parameter |mdash| they are mutually exclusive from each
                  other.
-* ``opal_mca_base_component_show_load_errors``: By default, Open MPI
+* ``mca_base_component_show_load_errors``: By default, Open MPI
   emits a warning message if it fails to open a DSO component at run
   time.  This typically happens when a shared library that the DSO
   requires is not available.
