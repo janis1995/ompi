@@ -696,7 +696,7 @@ int32_t libddtpack_unpack_function(opal_convertor_t *pConvertor, struct iovec *i
     unsigned char *conv_ptr, *iov_ptr, *cont_ptr;
     size_t iov_len_local;
     uint32_t iov_count;
-    uint32_t dt_size_true = pConvertor->pDesc->true_ub - pConvertor->pDesc->true_lb;
+    uint32_t dt_size_true = pConvertor->pDesc->ub - pConvertor->pDesc->lb;
     uint32_t dt_size_packed = pConvertor->pDesc->size; 
     uint8_t align = pConvertor->pDesc->align;
     uint8_t align_offset = 0;
