@@ -930,6 +930,8 @@ OPAL_SEARCH_LIBS_CORE([ceil], [m])
 # -lrt might be needed for clock_gettime
 OPAL_SEARCH_LIBS_CORE([clock_gettime], [rt])
 
+OPAL_CHECK_LIBDDTPACK
+
 AC_CHECK_FUNCS([asprintf snprintf vasprintf vsnprintf openpty isatty getpwuid fork waitpid execve pipe ptsname setsid mmap tcgetpgrp posix_memalign strsignal sysconf syslog vsyslog regcmp regexec regfree _NSGetEnviron socketpair usleep mkfifo dbopen dbm_open statfs statvfs setpgid setenv __malloc_initialize_hook __clear_cache on_exit])
 
 # Sanity check: ensure that we got at least one of statfs or statvfs.
