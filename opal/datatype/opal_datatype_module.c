@@ -288,6 +288,16 @@ int32_t opal_datatype_init(void)
 
     opal_finalize_register_cleanup(opal_datatype_finalize);
 
+#ifdef OPAL_ENABLE_DEBUG
+    const int debug_mode = 1;
+#else
+    const int debug_mode = 0;
+#endif
+    if (0 != ddtpack_verify_debug(debug_mode)) {
+        opal_output(0, "Error inializing datatype module: libddtpack's DEBUG mode does not match Open MPI's");
+        return OPAL_ERR_FATAL;
+    }
+
     // Call init function for libddtpack
     ddtpack_init();
 
