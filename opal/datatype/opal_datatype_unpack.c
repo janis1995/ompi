@@ -700,6 +700,9 @@ int32_t libddtpack_unpack_function(opal_convertor_t *pConvertor, struct iovec *i
     uint32_t dt_size_packed = pConvertor->pDesc->size; 
     uint8_t align = pConvertor->pDesc->align;
     uint8_t align_offset = 0;
+
+    code_handle_s * code_unpack = pData->ddtpack_hndl.code_unpack;
+    ddtpack_unpack unpack_func = (ddtpack_unpack)(code_unpack->page_handle->address + code_unpack->offset);
     
     //Calculate proper alignment
     if( (dt_size_true % align) != 0)
@@ -749,7 +752,7 @@ int32_t libddtpack_unpack_function(opal_convertor_t *pConvertor, struct iovec *i
                     return 0;    
                 }
                 // Unpack data into user memory
-                pData->ddtpack_hndl.unpack_func(iov_ptr, conv_ptr);
+                unpack_func(iov_ptr, conv_ptr);
                 // Update input and output pointer
                 conv_ptr += (dt_size_true + align_offset);
                 iov_ptr += dt_size_packed;
@@ -773,7 +776,7 @@ int32_t libddtpack_unpack_function(opal_convertor_t *pConvertor, struct iovec *i
                 while(pStack->count > 0)
                 {
                     // Unpack data into user memory
-                    pData->ddtpack_hndl.unpack_func(cont_ptr, conv_ptr);
+                    unpack_func(cont_ptr, conv_ptr);
                     // Update input and output pointer
                     conv_ptr += (dt_size_true + align_offset);
                     cont_ptr += dt_size_packed;

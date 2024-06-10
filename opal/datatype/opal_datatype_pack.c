@@ -645,6 +645,9 @@ int32_t libddtpack_pack_function(opal_convertor_t *pConvertor, struct iovec *iov
     uint32_t dt_size_packed = pConvertor->pDesc->size; 
     uint8_t align = pConvertor->pDesc->align;
     uint8_t align_offset = 0;
+
+    code_handle_s * code_pack = pData->ddtpack_hndl.code_pack;
+    ddtpack_pack pack_func = (ddtpack_pack)(code_pack->page_handle->address + code_pack->offset);
     
     //Calculate proper alignment
     if( (dt_size_true % align) != 0)
@@ -674,7 +677,7 @@ int32_t libddtpack_pack_function(opal_convertor_t *pConvertor, struct iovec *iov
             //Init contiguous pointer
             cont_ptr = pConvertor->pTmpBaseBuf;
             // Pack data in contiguous memory
-            pData->ddtpack_hndl.pack_func(conv_ptr, pConvertor->pTmpBaseBuf);
+            pack_func(conv_ptr, pConvertor->pTmpBaseBuf);
         }
 
         if (NULL == pConvertor->pTmpBaseBuf)
@@ -694,7 +697,7 @@ int32_t libddtpack_pack_function(opal_convertor_t *pConvertor, struct iovec *iov
                     return 0;    
                 }
                 // Pack data into network buffer
-                pData->ddtpack_hndl.pack_func(conv_ptr, iov_ptr);
+                pack_func(conv_ptr, iov_ptr);
                 // Update input and output pointer
                 conv_ptr += (dt_size_true + align_offset);
                 iov_ptr += dt_size_packed;
@@ -734,7 +737,7 @@ int32_t libddtpack_pack_function(opal_convertor_t *pConvertor, struct iovec *iov
                 if(0 != pStack->count)
                 {
                     //Pack next dataytpe elm in contiguous memory
-                    pData->ddtpack_hndl.pack_func(conv_ptr, pConvertor->pTmpBaseBuf); 
+                    pack_func(conv_ptr, pConvertor->pTmpBaseBuf);
                 }
                 else
                 {
