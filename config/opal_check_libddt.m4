@@ -47,7 +47,7 @@ AC_DEFUN([OPAL_CHECK_LIBDDTPACK],[
 
 AC_DEFUN([OPAL_CHECK_libddtpack_LIBRARY],[
     AC_MSG_CHECKING([compile and run with libddtpack])
-    AC_RUN_IFELSE([AC_LANG_PROGRAM([[
+    AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[
 #include "ddtpack.h"
 static int do_check (void) {
     ddtpack_datatype_s dt;
